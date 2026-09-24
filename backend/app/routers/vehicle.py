@@ -19,15 +19,46 @@ STATUSES = ["可用", "出车中", "维修中", "已停用"]
 @router.get("", response_model=PageResult[dict])
 def list_entries(
     keyword: str | None = Query(default=None, description="按车牌号码检索"),
-    status: str | None = Query(default=None, description="可用、出车中、维修中、已停用"),
-    page: int = 1,
-    size: int = 20,
+    vehicle_type: str | None = Query(default=None, description="按车辆类型精确过滤，全部或空表示不限制"),
+    status: str | None = Query(default=None, description="可用、出车中、维修中、已停用；全部或空表示不限制"),
+    page: int = Query(default=1, ge=1, description="页码，从 1 开始"),
+    size: int = Query(default=20, ge=1, description="每页条数"),
 ) -> PageResult[dict]:
-    """按车牌号码与状态过滤冷藏车管理列表；没有数据时返回空页，不报错。"""
+    """按车牌号码、车辆类型与状态过滤冷藏车管理列表；没有数据时返回空页，不报错。"""
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
+    items, total = service.list_entries(
+        keyword=keyword,
+        vehicle_type=vehicle_type,
+        status=status,
+        page=page,
+        size=size,
+    )
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/filter-options")
+def get_filter_options() -> dict[str, Any]:
+    """筛选栏候选项：车辆类型列表、状态列表与各状态数量。"""
+    return service.filter_options()
+
+
+# 注意：静态路径必须在 /{entry_id} 之前声明，否则会被整型详情路由的匹配规则拦截。
+@router.get("/export")
+def export_entries(
+    keyword: str | None = None,
+    vehicle_type: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    """导出冷藏车管理清单：沿用列表页当前的筛选条件，导出过滤后的全量数据。"""
+    items, total = service.list_entries(
+        keyword=keyword,
+        vehicle_type=vehicle_type,
+        status=status,
+        page=1,
+        size=10000,
+    )
+    return {"module": "vehicle", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -56,10 +87,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出冷藏车管理清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "vehicle", "total": total, "items": items}

@@ -11,24 +11,60 @@ STATUS_ORDER = ["可用", "出车中", "维修中", "已停用"]
 ACTION_RULES = {"安排出车": "出车中", "回场登记": "可用", "停用车辆": "已停用"}
 NEGATIVE_ACTIONS = ["停用车辆"]
 
+# 前端“全部”选项与空字符串都表示不加该维度的筛选
+ALL_OPTION = "全部"
+
+
+def _is_noop(value: str | None) -> bool:
+    return value is None or value.strip() == "" or value.strip() == ALL_OPTION
+
 
 class VehicleService:
     def list_entries(
         self,
         *,
         keyword: str | None = None,
+        vehicle_type: str | None = None,
         status: str | None = None,
         page: int = 1,
         size: int = 20,
     ) -> tuple[list[dict[str, Any]], int]:
         rows = store.rows(MODULE)
-        if keyword:
-            rows = [row for row in rows if keyword in str(row.get("车牌号码", ""))]
-        if status:
-            rows = [row for row in rows if row.get("status") == status]
+        if keyword and keyword.strip():
+            plate = keyword.strip()
+            rows = [row for row in rows if plate in str(row.get("车牌号码", ""))]
+        if not _is_noop(vehicle_type):
+            vtype = vehicle_type.strip()
+            rows = [row for row in rows if str(row.get("车辆类型", "")).strip() == vtype]
+        if not _is_noop(status):
+            target_status = status.strip()
+            rows = [row for row in rows if row.get("status") == target_status]
+        # 先按稳定口径排序再计数、再切片：total 永远是“筛选后”的条数，
+        # 同一筛选条件下翻页不会出现重复或乱序。
+        rows = sorted(rows, key=lambda row: int(row.get("id", 0)))
         total = len(rows)
-        start = max(page - 1, 0) * size
+        page = max(page, 1)
+        start = (page - 1) * size
         return rows[start:start + size], total
+
+    def filter_options(self) -> dict[str, Any]:
+        """给筛选栏提供候选项：车辆类型取数据去重，状态用固定流转序列。"""
+        rows = store.rows(MODULE)
+        vehicle_types = sorted({
+            str(row.get("车辆类型", "")).strip()
+            for row in rows
+            if str(row.get("车辆类型", "")).strip()
+        })
+        status_counts = {
+            label: sum(1 for row in rows if row.get("status") == label)
+            for label in STATUS_ORDER
+        }
+        return {
+            "vehicle_types": vehicle_types,
+            "statuses": STATUS_ORDER,
+            "all": ALL_OPTION,
+            "status_counts": status_counts,
+        }
 
     def get_entry(self, entry_id: int) -> dict[str, Any] | None:
         return store.find(MODULE, entry_id)
